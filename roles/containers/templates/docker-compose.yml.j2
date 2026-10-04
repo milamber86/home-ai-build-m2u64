@@ -1,0 +1,122 @@
+# {{ ansible_managed }}
+# Apple Silicon adaptation of the 2GuysTek 3x3090 stack.
+# Native arm64 images only (no :cuda); GPU work runs natively in Ollama / Infinity.
+name: ai-box-stack
+
+services:
+  open-webui:
+    image: "{{ webui_image }}"
+    container_name: open-webui
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ webui_port }}:8080"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    environment:
+      - WEBUI_NAME=AI Stack
+      - WEBUI_SECRET_KEY={{ webui_secret_key }}
+      - WEBUI_URL=https://{{ ai_hostname }}
+      - DATA_DIR=/app/backend/data
+      - OLLAMA_BASE_URL=http://host.docker.internal:{{ ollama_host_port }}
+      - ENABLE_API_KEYS=true
+      # --- Vector DB ---
+      - VECTOR_DB=qdrant
+      - QDRANT_URI=http://qdrant:6333
+      - ENABLE_QDRANT_MULTITENANCY_MODE=true
+      # --- Embeddings (served by native Ollama on Metal) ---
+      - RAG_EMBEDDING_ENGINE=ollama
+      - RAG_EMBEDDING_MODEL={{ rag_embedding_model }}
+      - RAG_OLLAMA_BASE_URL=http://host.docker.internal:{{ ollama_host_port }}
+      # --- Document extraction ---
+      - CONTENT_EXTRACTION_ENGINE=tika
+      - TIKA_SERVER_URL=http://tika:9998
+      - TIKA_SERVER_VERSION=4
+      # --- Hybrid search + reranking ---
+      - ENABLE_RAG_HYBRID_SEARCH=true
+      - RAG_RERANKING_ENGINE={{ reranking_engine_effective }}
+{% if reranking_engine_effective == 'external' %}
+      - RAG_EXTERNAL_RERANKER_URL=http://host.docker.internal:{{ reranker_port }}/rerank
+      - RAG_RERANKING_MODEL={{ reranker_model }}
+{% endif %}
+      - RAG_TOP_K=20
+      - RAG_TOP_K_RERANKER=5
+      - RAG_SYSTEM_CONTEXT=true
+      # --- Web search (SearXNG) ---
+      - ENABLE_WEB_SEARCH=true
+      - WEB_SEARCH_ENGINE=searxng
+      - SEARXNG_QUERY_URL=http://searxng:8080/search
+      - WEB_SEARCH_RESULT_COUNT=3
+      - WEB_SEARCH_CONCURRENT_REQUESTS=10
+{% if open_terminal_enabled %}
+      - 'TERMINAL_SERVER_CONNECTIONS=[{"id":"open-terminal","name":"Open Terminal","url":"http://open-terminal:8000","key":"{{ open_terminal_api_key }}","auth_type":"bearer"}]'
+{% endif %}
+    volumes:
+      - "{{ ai_base_dir }}/openwebui/core:/app/backend/data"
+      - "{{ ai_base_dir }}/openwebui/rag/docs:/app/backend/data/docs"
+      - "{{ ai_base_dir }}/openwebui/rag/uploads:/app/backend/data/uploads"
+    depends_on:
+      - qdrant
+      - tika
+      - searxng
+{% if open_terminal_enabled %}
+      - open-terminal
+{% endif %}
+
+  qdrant:
+    image: "{{ qdrant_image }}"
+    container_name: qdrant
+    restart: unless-stopped
+    volumes:
+      - "{{ ai_base_dir }}/qdrant/storage:/qdrant/storage"
+
+  tika:
+    image: "{{ tika_image }}"
+    container_name: tika
+    restart: unless-stopped
+
+  searxng:
+    image: "{{ searxng_image }}"
+    container_name: searxng
+    restart: unless-stopped
+    volumes:
+      - "{{ ai_base_dir }}/searxng:/etc/searxng:ro"
+    environment:
+      - SEARXNG_BASE_URL=https://{{ ai_hostname }}/
+      - SEARXNG_SECRET={{ searxng_secret }}
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "1"
+{% if open_terminal_enabled %}
+
+  open-terminal:
+    image: "{{ open_terminal_image }}"
+    container_name: open-terminal
+    restart: unless-stopped
+    environment:
+      - OPEN_TERMINAL_API_KEY={{ open_terminal_api_key }}
+      - OPEN_TERMINAL_PACKAGES=ripgrep tree curl
+      - OPEN_TERMINAL_PIP_PACKAGES=httpx polars
+      - OPEN_TERMINAL_MULTI_USER=true
+    security_opt:
+      - no-new-privileges:false
+    cap_drop:
+      - NET_ADMIN
+      - SYS_ADMIN
+{% endif %}
+{% if dozzle_enabled %}
+
+  dozzle:
+    image: "{{ dozzle_image }}"
+    container_name: dozzle
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ dozzle_port }}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+{% endif %}

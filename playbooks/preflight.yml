@@ -1,0 +1,46 @@
+---
+# Read-only environment checks. Safe to run any time:
+#   ansible-playbook playbooks/preflight.yml
+- name: Preflight checks for the M2 Ultra AI stack
+  hosts: m2ultra
+  gather_facts: true
+  tasks:
+    - name: Assert the host is Apple Silicon macOS
+      ansible.builtin.assert:
+        that:
+          - ansible_system == 'Darwin'
+          - ansible_architecture == 'arm64'
+        fail_msg: "Expected Darwin/arm64, got {{ ansible_system }}/{{ ansible_architecture }}."
+
+    - name: Check for required command-line tools
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      register: tool_stats
+      loop:
+        - "{{ brew_native_bin_dir }}/brew"
+        - "{{ brew_native_bin_dir }}/ollama"
+        - "{{ caddy_bin }}"
+        - /usr/local/bin/docker
+        - /usr/sbin/sysctl
+
+    - name: Report tool availability
+      ansible.builtin.debug:
+        msg: "{{ item.item }} -> {{ 'present' if item.stat.exists else 'MISSING' }}"
+      loop: "{{ tool_stats.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Ensure the Caddy configuration file exists
+      ansible.builtin.stat:
+        path: "{{ caddy_config_file }}"
+      register: caddyfile_stat
+
+    - name: Show resolved configuration summary
+      ansible.builtin.debug:
+        msg:
+          - "Hostname: {{ ai_hostname }}"
+          - "AI base dir: {{ ai_base_dir }}"
+          - "Ollama models: {{ ollama_models | join(', ') }}"
+          - "Reranking engine (configured): {{ reranking_engine }}"
+          - "Caddyfile: {{ caddy_config_file }} ({{ 'present' if caddyfile_stat.stat.exists else 'MISSING' }})"
+          - "Metal wired limit: {{ iogpu_wired_limit_mb }} MB"

@@ -1,0 +1,98 @@
+---
+- name: Assert the target is Apple Silicon macOS
+  ansible.builtin.assert:
+    that:
+      - ansible_system == 'Darwin'
+      - ansible_architecture == 'arm64'
+    fail_msg: >-
+      This playbook targets Apple Silicon macOS only
+      (detected {{ ansible_system }}/{{ ansible_architecture }}).
+
+- name: Show resolved platform paths
+  ansible.builtin.debug:
+    msg:
+      - "AI base dir: {{ ai_base_dir }}"
+      - "Native Homebrew: {{ brew_native_bin_dir }}"
+
+- name: Ensure the native (arm64) Homebrew prefix exists
+  ansible.builtin.stat:
+    path: "{{ brew_native_bin_dir }}/brew"
+  register: brew_stat
+
+- name: Fail when native arm64 Homebrew is missing
+  ansible.builtin.assert:
+    that:
+      - brew_stat.stat.exists
+    fail_msg: >-
+      Native Homebrew not found at {{ brew_native_bin_dir }}/brew.
+      Install it from https://brew.sh (it must be the arm64 prefix).
+
+- name: Create AI base directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ ai_base_dir }}"
+    - "{{ ai_logs_dir }}"
+    - "{{ ai_base_dir }}/openwebui/core"
+    - "{{ ai_base_dir }}/openwebui/rag/docs"
+    - "{{ ai_base_dir }}/openwebui/rag/uploads"
+    - "{{ ai_base_dir }}/qdrant/storage"
+    - "{{ ai_base_dir }}/searxng"
+    - "{{ ai_base_dir }}/caddy"
+
+# --- Metal "VRAM" wired limit ------------------------------------------------
+- name: Apply the Metal wired memory limit now
+  ansible.builtin.command:
+    cmd: "/usr/sbin/sysctl -w iogpu.wired_limit_mb={{ iogpu_wired_limit_mb }}"
+  become: true
+  changed_when: false
+
+- name: Install the LaunchDaemon that persists the Metal wired limit
+  ansible.builtin.template:
+    src: com.otto.iogpu-wired-limit.plist.j2
+    dest: /Library/LaunchDaemons/com.otto.iogpu-wired-limit.plist
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+
+- name: Load and start the wired-limit LaunchDaemon
+  community.general.launchd:
+    name: com.otto.iogpu-wired-limit
+    state: restarted
+    enabled: true
+  become: true
+
+# --- Docker Desktop ----------------------------------------------------------
+- name: Check whether the Docker daemon is reachable
+  ansible.builtin.command: docker info
+  register: docker_info
+  changed_when: false
+  failed_when: false
+
+- name: Launch Docker Desktop when the daemon is not running
+  ansible.builtin.command: /usr/bin/open -a Docker
+  when: docker_info.rc != 0
+  changed_when: true
+
+- name: Wait for the Docker daemon to become reachable
+  ansible.builtin.command: docker info
+  register: docker_wait
+  changed_when: false
+  until: docker_wait.rc == 0
+  retries: 30
+  delay: 5
+  when: docker_info.rc != 0
+  failed_when: false
+
+- name: Warn when Docker never became reachable
+  ansible.builtin.debug:
+    msg: >-
+      Docker daemon is not reachable. Start Docker Desktop and re-run; the
+      containers role will otherwise fail.
+  when:
+    - docker_wait is defined
+    - docker_wait.rc is defined
+    - docker_wait.rc != 0

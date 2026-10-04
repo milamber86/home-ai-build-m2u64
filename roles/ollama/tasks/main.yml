@@ -1,0 +1,53 @@
+---
+- name: Ensure Ollama is installed via the native arm64 Homebrew
+  community.general.homebrew:
+    name: ollama
+    state: present
+    path: "{{ brew_native_bin_dir }}"
+  environment:
+    HOMEBREW_NO_AUTO_UPDATE: "1"
+
+- name: Verify the Ollama binary is present
+  ansible.builtin.stat:
+    path: "{{ brew_native_bin_dir }}/ollama"
+  register: ollama_bin
+
+- name: Fail when Ollama is unavailable
+  ansible.builtin.assert:
+    that:
+      - ollama_bin.stat.exists
+      - ollama_bin.stat.executable
+    fail_msg: "Ollama binary not found at {{ brew_native_bin_dir }}/ollama."
+
+- name: Deploy the Ollama LaunchAgent
+  ansible.builtin.template:
+    src: com.otto.ollama.plist.j2
+    dest: "{{ ansible_env.HOME }}/Library/LaunchAgents/com.otto.ollama.plist"
+    mode: "0644"
+
+- name: Load and start Ollama
+  community.general.launchd:
+    name: com.otto.ollama
+    state: started
+    enabled: true
+
+- name: Wait for the Ollama API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ ollama_host_port }}/api/tags"
+    status_code: 200
+  register: ollama_api
+  until: ollama_api.status == 200
+  retries: 30
+  delay: 2
+  changed_when: false
+
+- name: List currently installed Ollama models
+  ansible.builtin.command: "{{ brew_native_bin_dir }}/ollama list"
+  register: ollama_list
+  changed_when: false
+
+# First run downloads tens of GB (the 70B Q4 alone is ~43 GB). Be patient.
+- name: Pull required Ollama models
+  ansible.builtin.command: "{{ brew_native_bin_dir }}/ollama pull {{ item }}"
+  loop: "{{ ollama_models }}"
+  when: item not in ollama_list.stdout

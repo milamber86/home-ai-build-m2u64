@@ -1,0 +1,7 @@
+{{ ai_hostname }} {
+    encode gzip
+    basic_auth {
+        {{ caddy_basic_auth_user }} {{ caddy_basic_auth_hash }}
+    }
+    reverse_proxy 127.0.0.1:{{ webui_port }}
+}

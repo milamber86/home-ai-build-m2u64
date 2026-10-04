@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- {{ ansible_managed }} -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.otto.ollama</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{ brew_native_bin_dir }}/ollama</string>
+        <string>serve</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>OLLAMA_HOST</key>
+        <string>0.0.0.0:{{ ollama_host_port }}</string>
+        <key>OLLAMA_KEEP_ALIVE</key>
+        <string>{{ ollama_keep_alive }}</string>
+        <key>OLLAMA_CONTEXT_LENGTH</key>
+        <string>{{ ollama_context_length }}</string>
+        <key>OLLAMA_ORIGINS</key>
+        <string>*</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{{ ai_logs_dir }}/ollama.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{ ai_logs_dir }}/ollama.err.log</string>
+</dict>
+</plist>

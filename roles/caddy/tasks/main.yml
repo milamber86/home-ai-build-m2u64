@@ -1,0 +1,66 @@
+---
+- name: Verify the Caddy binary exists
+  ansible.builtin.stat:
+    path: "{{ caddy_bin }}"
+  register: caddy_stat
+
+- name: Fail when Caddy is not installed
+  ansible.builtin.assert:
+    that:
+      - caddy_stat.stat.exists
+      - caddy_stat.stat.executable
+    fail_msg: "Caddy not found at {{ caddy_bin }}."
+
+- name: Check the expected Caddyfile
+  ansible.builtin.stat:
+    path: "{{ caddy_config_file }}"
+  register: caddy_conf
+
+- name: Fail when the Caddyfile is missing
+  ansible.builtin.assert:
+    that:
+      - caddy_conf.stat.exists
+    fail_msg: >-
+      Caddyfile not found at {{ caddy_config_file }}. Point caddy_config_file in
+      inventory/group_vars/all.yml at the config used by your running Caddy.
+
+- name: Ensure the AI site block is present in the Caddyfile
+  ansible.builtin.blockinfile:
+    path: "{{ caddy_config_file }}"
+    marker: "# {mark} ANSIBLE MANAGED AI STACK"
+    block: "{{ lookup('ansible.builtin.template', 'Caddyfile.ai.j2') }}"
+    insertafter: EOF
+  register: caddy_block
+
+- name: Validate the resulting Caddyfile
+  ansible.builtin.command:
+    cmd: "{{ caddy_bin }} validate --config {{ caddy_config_file }}"
+  changed_when: false
+
+- name: Reload Caddy via the admin API
+  ansible.builtin.command:
+    cmd: "{{ caddy_bin }} reload --config {{ caddy_config_file }}"
+  register: caddy_reload
+  when: caddy_block.changed
+  changed_when: true
+  failed_when: false
+
+- name: Fall back to restarting the Caddy service when reload is unavailable
+  community.general.launchd:
+    name: "{{ caddy_launchd_label }}"
+    state: restarted
+  when:
+    - caddy_block.changed
+    - caddy_reload.rc != 0
+  failed_when: false
+
+- name: Report Caddy reload status
+  ansible.builtin.debug:
+    msg: >-
+      {{
+        'AI site block already present; no reload needed.'
+        if not caddy_block.changed
+        else ('Caddy reloaded via admin API.'
+              if caddy_reload.rc == 0
+              else 'Admin reload failed; attempted service restart fallback.')
+      }}

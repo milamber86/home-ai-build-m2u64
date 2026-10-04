@@ -1,0 +1,77 @@
+---
+- name: Ensure native Python 3.11 is installed
+  community.general.homebrew:
+    name: python@3.11
+    state: present
+    path: "{{ brew_native_bin_dir }}"
+  environment:
+    HOMEBREW_NO_AUTO_UPDATE: "1"
+
+- name: Create the reranker virtualenv
+  ansible.builtin.command:
+    cmd: "{{ brew_native_bin_dir }}/python3.11 -m venv {{ ai_base_dir }}/infinity-venv"
+    creates: "{{ ai_base_dir }}/infinity-venv/bin/python"
+
+# Heavy: pulls torch and friends (~2-3 GB). Runs once; pip is idempotent.
+- name: Install infinity-emb (torch/MPS backend) into the venv
+  ansible.builtin.pip:
+    name: "infinity-emb[all]"
+    virtualenv: "{{ ai_base_dir }}/infinity-venv"
+    state: present
+  register: infinity_install
+  failed_when: false
+
+- name: Check whether the infinity_emb CLI was installed
+  ansible.builtin.stat:
+    path: "{{ ai_base_dir }}/infinity-venv/bin/infinity_emb"
+  register: infinity_bin
+
+- name: Fall back to Open WebUI's built-in reranker when infinity-emb is unavailable
+  ansible.builtin.set_fact:
+    reranking_engine_effective: "{{ 'external' if infinity_bin.stat.exists else 'local' }}"
+
+- name: Report the effective reranking engine
+  ansible.builtin.debug:
+    msg: "Reranking engine in use: {{ reranking_engine_effective }}"
+
+- name: Deploy the Infinity reranker LaunchAgent
+  ansible.builtin.template:
+    src: com.otto.infinity-reranker.plist.j2
+    dest: "{{ ansible_env.HOME }}/Library/LaunchAgents/com.otto.infinity-reranker.plist"
+    mode: "0644"
+  when: reranking_engine_effective == 'external'
+
+- name: Load and start the Infinity reranker
+  community.general.launchd:
+    name: com.otto.infinity-reranker
+    state: started
+    enabled: true
+  when: reranking_engine_effective == 'external'
+
+- name: Wait for the reranker health endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ reranker_port }}/health"
+    status_code: 200
+  register: reranker_health
+  until: reranker_health.status == 200
+  retries: 40
+  delay: 5
+  changed_when: false
+  when: reranking_engine_effective == 'external'
+  failed_when: false
+
+- name: Stop the Infinity agent and fall back when it never became healthy
+  when:
+    - reranking_engine_effective == 'external'
+    - reranker_health.status is defined
+    - reranker_health.status != 200
+  block:
+    - name: Record the fallback to the built-in reranker
+      ansible.builtin.set_fact:
+        reranking_engine_effective: local
+
+    - name: Stop the unhealthy Infinity agent
+      community.general.launchd:
+        name: com.otto.infinity-reranker
+        state: stopped
+      failed_when: false

@@ -1,0 +1,7 @@
+---
+# The `ansible` 11.x community bundle already ships these collections; this file
+# exists so the project can be reproduced on a bare ansible-core install.
+collections:
+  - name: community.general
+  - name: community.docker
+  - name: ansible.posix

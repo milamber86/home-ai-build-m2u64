@@ -1,0 +1,60 @@
+---
+# Non-secret configuration for the M2 Ultra AI stack.
+# Secrets live in group_vars/vault.yml (see vault.yml.example).
+
+# --- Paths / platform -------------------------------------------------------
+# Use the NATIVE (arm64) Homebrew only. /usr/local is x86_64 on this host.
+brew_native_bin_dir: /opt/homebrew/bin
+ai_base_dir: "{{ ansible_env.HOME }}/ai-box"
+ai_logs_dir: "{{ ai_base_dir }}/logs"
+
+# --- Networking / public edge ----------------------------------------------
+# Second DuckDNS name pointing at the same home IP (see README).
+ai_hostname: beranci-ai.duckdns.org
+webui_port: 3000
+ollama_host_port: 11434
+reranker_port: 7997
+dozzle_port: 8088
+
+# --- Ollama (native arm64, Metal) ------------------------------------------
+ollama_models:
+  - llama3.3:70b-instruct-q4_K_M
+  - qwen2.5:32b
+  - llama3.2:8b
+  - mxbai-embed-large
+  # - qwen2.5-coder:32b          # optional code model; uncomment to include
+# 32k context keeps the 70B KV cache within the 64 GB unified-memory budget.
+ollama_context_length: 32768
+# Unload a resident model after 30m so a 43 GB 70B does not pin memory forever.
+# Set to "-1" to keep models loaded permanently (article default).
+ollama_keep_alive: 30m
+
+# --- Metal GPU memory -------------------------------------------------------
+# Default Metal cap is ~75% of 64 GB (~48 GB). Raise to 56 GB for the 70B Q4.
+iogpu_wired_limit_mb: 57344
+
+# --- RAG / reranking --------------------------------------------------------
+rag_embedding_model: mxbai-embed-large
+reranker_model: BAAI/bge-reranker-v2-m3
+reranking_engine: external            # external (Infinity/MPS) | local (Open WebUI built-in)
+reranking_engine_effective: "{{ reranking_engine }}"
+
+# --- Optional services ------------------------------------------------------
+open_terminal_enabled: true
+dozzle_enabled: true
+
+# --- Container images -------------------------------------------------------
+# Native arm64 images only; never the :cuda variants on Apple Silicon.
+# Pin explicit versions for production. TODO: pin these.
+webui_image: ghcr.io/open-webui/open-webui:main
+qdrant_image: qdrant/qdrant:latest
+tika_image: apache/tika:latest-full
+searxng_image: searxng/searxng:latest
+open_terminal_image: ghcr.io/open-webui/open-terminal:latest
+dozzle_image: amir20/dozzle:latest
+
+# --- Caddy (native install already present) ---------------------------------
+caddy_bin: /usr/local/bin/caddy
+caddy_config_file: "{{ ansible_env.HOME }}/Caddyfile"
+# Homebrew services label for Caddy; used only as a reload fallback.
+caddy_launchd_label: homebrew.mxcl.caddy

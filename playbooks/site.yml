@@ -1,0 +1,11 @@
+---
+- name: Deploy the M2 Ultra local AI stack
+  hosts: m2ultra
+  gather_facts: true
+  roles:
+    - role: host
+    - role: ollama
+    - role: reranker
+    - role: containers
+    - role: caddy
+    - role: validate

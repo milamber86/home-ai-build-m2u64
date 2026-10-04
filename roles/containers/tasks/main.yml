@@ -1,0 +1,29 @@
+---
+- name: Deploy the SearXNG settings
+  ansible.builtin.template:
+    src: searxng-settings.yml.j2
+    dest: "{{ ai_base_dir }}/searxng/settings.yml"
+    mode: "0644"
+
+- name: Deploy the docker-compose stack definition
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ ai_base_dir }}/docker-compose.yml"
+    mode: "0644"
+
+- name: Bring up the AI stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ ai_base_dir }}"
+    files:
+      - docker-compose.yml
+    project_name: ai-box-stack
+    state: present
+    pull: missing
+    wait: true
+    wait_timeout: 600
+    remove_orphans: true
+  register: compose_up
+
+- name: Show container actions
+  ansible.builtin.debug:
+    var: compose_up.actions

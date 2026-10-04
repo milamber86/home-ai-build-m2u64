@@ -1,0 +1,66 @@
+---
+- name: List running stack containers
+  ansible.builtin.command:
+    cmd: "docker compose -f {{ ai_base_dir }}/docker-compose.yml ps"
+  register: compose_ps
+  changed_when: false
+  failed_when: false
+
+- name: Show container status
+  ansible.builtin.debug:
+    msg: "{{ compose_ps.stdout_lines | default([]) }}"
+
+- name: Check the Ollama API
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ ollama_host_port }}/api/tags"
+    status_code: 200
+  register: v_ollama
+  until: v_ollama.status == 200
+  retries: 5
+  delay: 3
+  changed_when: false
+  failed_when: false
+
+- name: Check Open WebUI on localhost
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ webui_port }}/"
+    status_code: 200
+  register: v_webui
+  until: v_webui.status == 200
+  retries: 30
+  delay: 5
+  changed_when: false
+  failed_when: false
+
+- name: Check the reranker health endpoint (external engine only)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ reranker_port }}/health"
+    status_code: 200
+  register: v_reranker
+  changed_when: false
+  failed_when: false
+  when: reranking_engine_effective == 'external'
+
+# Needs the second DuckDNS name to resolve. Enable with:
+#   ansible-playbook playbooks/site.yml -e check_public_endpoint=true
+- name: Check the public endpoint (optional)
+  ansible.builtin.uri:
+    url: "https://{{ ai_hostname }}/"
+    status_code: [200, 401]     # 401 is the expected basic_auth challenge
+    validate_certs: true
+  register: v_public
+  until: v_public.status in [200, 401]
+  retries: 3
+  delay: 5
+  changed_when: false
+  failed_when: false
+  when: check_public_endpoint | default(false)
+
+- name: Validation summary
+  ansible.builtin.debug:
+    msg:
+      - "Ollama API: {{ v_ollama.status | default('unreachable') }}"
+      - "Open WebUI (localhost): {{ v_webui.status | default('unreachable') }}"
+      - "Reranker: {{ (v_reranker.status | default('n/a')) if reranking_engine_effective == 'external' else 'built-in (local)' }}"
+      - "Public ({{ ai_hostname }}): {{ v_public.status | default('not checked') }}"
+      - "Hint: after loading a 70B model run 'ollama ps' and confirm 100% GPU."
