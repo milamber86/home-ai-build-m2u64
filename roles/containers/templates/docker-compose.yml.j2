@@ -23,6 +23,11 @@ services:
       - DATA_DIR=/app/backend/data
       - OLLAMA_BASE_URL=http://host.docker.internal:{{ ollama_host_port }}
       - ENABLE_API_KEYS=true
+      # --- Local auth: headless admin, public signup disabled ---
+      - ENABLE_SIGNUP={{ webui_enable_signup }}
+      - WEBUI_ADMIN_NAME={{ webui_admin_name }}
+      - WEBUI_ADMIN_EMAIL={{ webui_admin_email }}
+      - WEBUI_ADMIN_PASSWORD={{ webui_admin_password }}
       # --- Vector DB ---
       - VECTOR_DB=qdrant
       - QDRANT_URI=http://qdrant:6333

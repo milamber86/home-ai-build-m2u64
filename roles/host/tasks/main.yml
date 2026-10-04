@@ -48,6 +48,7 @@
     cmd: "/usr/sbin/sysctl -w iogpu.wired_limit_mb={{ iogpu_wired_limit_mb }}"
   become: true
   changed_when: false
+  tags: [wired_limit]
 
 - name: Install the LaunchDaemon that persists the Metal wired limit
   ansible.builtin.template:
@@ -57,6 +58,7 @@
     group: wheel
     mode: "0644"
   become: true
+  tags: [wired_limit]
 
 - name: Load and start the wired-limit LaunchDaemon
   community.general.launchd:
@@ -64,6 +66,7 @@
     state: restarted
     enabled: true
   become: true
+  tags: [wired_limit]
 
 # --- Docker Desktop ----------------------------------------------------------
 - name: Check whether the Docker daemon is reachable

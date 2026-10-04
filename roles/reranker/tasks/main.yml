@@ -12,14 +12,26 @@
     cmd: "{{ brew_native_bin_dir }}/python3.11 -m venv {{ ai_base_dir }}/infinity-venv"
     creates: "{{ ai_base_dir }}/infinity-venv/bin/python"
 
-# Heavy: pulls torch and friends (~2-3 GB). Runs once; pip is idempotent.
-- name: Install infinity-emb (torch/MPS backend) into the venv
-  ansible.builtin.pip:
-    name: "infinity-emb[all]"
-    virtualenv: "{{ ai_base_dir }}/infinity-venv"
-    state: present
+# `[torch]` gives the MPS backend; `[server]` gives the CLI deps (typer, fastapi,
+# uvicorn). `[all]` is avoided because it pulls ctranslate2/onnx, which have no
+# arm64 macOS wheels. `click<8.2` is pinned because click 8.2 breaks the typer
+# version infinity-emb pins ("Secondary flag is not valid for non-boolean flag").
+# A stamp file keeps the (slow) install idempotent.
+- name: Install infinity-emb (torch + server) into the venv
+  ansible.builtin.command:
+    cmd: "{{ ai_base_dir }}/infinity-venv/bin/python -m pip install 'infinity-emb[torch,server]' 'click<8.2'"
+    creates: "{{ ai_base_dir }}/infinity-venv/.infinity-emb-v2"
   register: infinity_install
   failed_when: false
+
+- name: Mark the reranker install complete
+  ansible.builtin.file:
+    path: "{{ ai_base_dir }}/infinity-venv/.infinity-emb-v2"
+    state: touch
+    mode: "0644"
+    access_time: preserve
+    modification_time: preserve
+  when: infinity_install.rc | default(1) == 0
 
 - name: Check whether the infinity_emb CLI was installed
   ansible.builtin.stat:
@@ -39,12 +51,13 @@
     src: com.otto.infinity-reranker.plist.j2
     dest: "{{ ansible_env.HOME }}/Library/LaunchAgents/com.otto.infinity-reranker.plist"
     mode: "0644"
+  register: infinity_plist
   when: reranking_engine_effective == 'external'
 
 - name: Load and start the Infinity reranker
   community.general.launchd:
     name: com.otto.infinity-reranker
-    state: started
+    state: "{{ 'restarted' if infinity_plist.changed | default(false) else 'started' }}"
     enabled: true
   when: reranking_engine_effective == 'external'
 
@@ -54,24 +67,26 @@
     status_code: 200
   register: reranker_health
   until: reranker_health.status == 200
-  retries: 40
+  retries: 60
   delay: 5
   changed_when: false
   when: reranking_engine_effective == 'external'
   failed_when: false
 
-- name: Stop the Infinity agent and fall back when it never became healthy
+- name: Record the fallback to the built-in reranker when Infinity is unhealthy
+  ansible.builtin.set_fact:
+    reranking_engine_effective: local
   when:
     - reranking_engine_effective == 'external'
     - reranker_health.status is defined
     - reranker_health.status != 200
-  block:
-    - name: Record the fallback to the built-in reranker
-      ansible.builtin.set_fact:
-        reranking_engine_effective: local
 
-    - name: Stop the unhealthy Infinity agent
-      community.general.launchd:
-        name: com.otto.infinity-reranker
-        state: stopped
-      failed_when: false
+- name: Stop the unhealthy Infinity agent
+  community.general.launchd:
+    name: com.otto.infinity-reranker
+    state: stopped
+  when:
+    - reranker_health.status is defined
+    - reranker_health.status != 200
+    - infinity_bin.stat.exists
+  failed_when: false

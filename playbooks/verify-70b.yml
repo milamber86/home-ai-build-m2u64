@@ -1,0 +1,36 @@
+---
+- name: Validate the 70B flagship fits and runs on the GPU
+  hosts: m2ultra
+  gather_facts: false
+  tasks:
+    - name: Ensure nothing else is resident
+      ansible.builtin.command: /opt/homebrew/bin/ollama stop llama3.3:70b-instruct-q4_K_M
+      changed_when: false
+      failed_when: false
+
+    - name: One-token generation with the 70B at 32k context (loads ~49 GB)
+      ansible.builtin.uri:
+        url: http://127.0.0.1:11434/api/generate
+        method: POST
+        body_format: json
+        body:
+          model: llama3.3-70b-32k
+          prompt: "Say hi."
+          stream: false
+          options:
+            num_predict: 1
+        status_code: 200
+        timeout: 600
+      register: gen70
+
+    - name: Show the loaded model
+      ansible.builtin.command: /opt/homebrew/bin/ollama ps
+      register: ps70
+      changed_when: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg:
+          - "70B generate status: {{ gen70.status }}"
+          - "70B response: {{ gen70.json.response | default('') }}"
+          - "ollama ps: {{ ps70.stdout_lines | default([]) }}"

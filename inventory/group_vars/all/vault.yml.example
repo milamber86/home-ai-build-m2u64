@@ -1,7 +1,7 @@
 ---
-# Template for inventory/group_vars/vault.yml. Copy to vault.yml, fill in, then encrypt:
-#   cp inventory/group_vars/vault.yml.example inventory/group_vars/vault.yml
-#   ansible-vault encrypt inventory/group_vars/vault.yml --vault-password-file ~/.vault_password.txt
+# Template for inventory/group_vars/all/vault.yml. Copy to vault.yml, fill in, then encrypt:
+#   cp inventory/group_vars/all/vault.yml.example inventory/group_vars/all/vault.yml
+#   ansible-vault encrypt inventory/group_vars/all/vault.yml --vault-password-file ~/.vault_password.txt
 webui_secret_key: "CHANGE-ME-openssl-rand-hex-32"
 searxng_secret: "CHANGE-ME-openssl-rand-hex-32"
 open_terminal_api_key: "CHANGE-ME-openssl-rand-hex-32"

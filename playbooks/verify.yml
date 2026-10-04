@@ -1,0 +1,74 @@
+---
+- name: Functional verification of the AI stack
+  hosts: m2ultra
+  gather_facts: true
+  tasks:
+    - name: Read the Metal wired-memory limit
+      ansible.builtin.command: /usr/sbin/sysctl -n iogpu.wired_limit_mb
+      register: wired
+      changed_when: false
+
+    - name: Call the reranker with two candidate documents
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ reranker_port }}/rerank"
+        method: POST
+        body_format: json
+        body:
+          query: "What is a homelab?"
+          documents:
+            - "A homelab is a personal server environment for self-hosting."
+            - "Bananas are a yellow tropical fruit."
+        status_code: 200
+      register: rerank
+      failed_when: false
+
+    - name: Reach Ollama from inside the Docker network (as Open WebUI does)
+      ansible.builtin.command: >-
+        docker run --rm curlimages/curl:latest -fsS
+        http://host.docker.internal:{{ ollama_host_port }}/api/tags
+      register: llm_from_docker
+      changed_when: false
+      failed_when: false
+      retries: 3
+      delay: 5
+      until: llm_from_docker.rc == 0
+
+    - name: Warm the 8B model with a one-token generation
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ ollama_host_port }}/api/generate"
+        method: POST
+        body_format: json
+        body:
+          model: llama3.1:8b
+          prompt: "hi"
+          stream: false
+          options:
+            num_predict: 1
+        status_code: 200
+      register: gen
+      failed_when: false
+
+    - name: Check whether the loaded model is on the GPU
+      ansible.builtin.command: "{{ brew_native_bin_dir }}/ollama ps"
+      register: ollama_ps
+      changed_when: false
+
+    - name: Public endpoint over TLS (may be unreachable behind hairpin NAT)
+      ansible.builtin.uri:
+        url: "https://{{ ai_hostname }}/"
+        status_code: [200, 401]
+        validate_certs: true
+      register: public_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Verification summary
+      ansible.builtin.debug:
+        msg:
+          - "iogpu.wired_limit_mb: {{ wired.stdout }}"
+          - "reranker /rerank status: {{ rerank.status | default('FAILED') }}"
+          - "reranker result[0]: {{ rerank.json.results[0] if (rerank.json is defined and rerank.json.results is defined and rerank.json.results) else 'n/a' }}"
+          - "Ollama reachable from a container: {{ llm_from_docker.rc == 0 }}"
+          - "generate status: {{ gen.status | default('FAILED') }}"
+          - "ollama ps: {{ ollama_ps.stdout_lines | default([]) }}"
+          - "public https status: {{ public_probe.status | default('unreachable') }} ({{ public_probe.msg | default('') }})"

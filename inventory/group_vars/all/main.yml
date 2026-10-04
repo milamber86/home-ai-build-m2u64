@@ -20,10 +20,24 @@ dozzle_port: 8088
 ollama_models:
   - llama3.3:70b-instruct-q4_K_M
   - qwen2.5:32b
-  - llama3.2:8b
+  - llama3.1:8b
   - mxbai-embed-large
   # - qwen2.5-coder:32b          # optional code model; uncomment to include
-# 32k context keeps the 70B KV cache within the 64 GB unified-memory budget.
+
+# Derived models with a baked 32k context. Ollama 0.34 auto-picks a context from
+# available VRAM and otherwise loads the 70B at its 131072 max, which overflows
+# the 56 GB wired limit and spills ~11% to CPU. Pick these "-32k" variants in
+# Open WebUI. They share blobs with the base models, so they cost no extra disk.
+ollama_chat_models:
+  - name: llama3.3-70b-32k
+    base: llama3.3:70b-instruct-q4_K_M
+  - name: qwen2.5-32b-32k
+    base: qwen2.5:32b
+  - name: llama3.1-8b-32k
+    base: llama3.1:8b
+# Context length baked into the derived "-32k" chat models. Ollama 0.34's own
+# OLLAMA_CONTEXT_LENGTH is superseded by a VRAM-based default, so this value is
+# applied per-model at build time instead. 32k keeps the 70B within the wired limit.
 ollama_context_length: 32768
 # Unload a resident model after 30m so a 43 GB 70B does not pin memory forever.
 # Set to "-1" to keep models loaded permanently (article default).
@@ -43,6 +57,14 @@ reranking_engine_effective: "{{ reranking_engine }}"
 open_terminal_enabled: true
 dozzle_enabled: true
 
+# --- Edge auth --------------------------------------------------------------
+# HTTP basic auth is OFF: Chrome re-prompts on every SPA request (XHR/WebSocket/
+# service-worker) because a cached basic-auth credential does not cover them.
+# Access is instead protected by Open WebUI's own login, with public signup
+# disabled and an admin account created headlessly from the vault.
+caddy_basic_auth_enabled: false
+webui_enable_signup: false
+
 # --- Container images -------------------------------------------------------
 # Native arm64 images only; never the :cuda variants on Apple Silicon.
 # Pin explicit versions for production. TODO: pin these.
@@ -56,5 +78,6 @@ dozzle_image: amir20/dozzle:latest
 # --- Caddy (native install already present) ---------------------------------
 caddy_bin: /usr/local/bin/caddy
 caddy_config_file: "{{ ansible_env.HOME }}/Caddyfile"
-# Homebrew services label for Caddy; used only as a reload fallback.
-caddy_launchd_label: homebrew.mxcl.caddy
+# Caddy must bind :80/:443, which needs root, so it is managed as a LaunchDaemon.
+caddy_launchd_label: com.otto.caddy
+caddy_plist_path: /Library/LaunchDaemons/com.otto.caddy.plist

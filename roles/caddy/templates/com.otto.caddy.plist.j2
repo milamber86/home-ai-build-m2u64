@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- {{ ansible_managed }} -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{{ caddy_launchd_label }}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{ caddy_bin }}</string>
+        <string>run</string>
+        <string>--config</string>
+        <string>{{ caddy_config_file }}</string>
+        <string>--adapter</string>
+        <string>caddyfile</string>
+    </array>
+    <!-- Keep HOME pointing at the user home so the existing ACME data in
+         ~/Library/Application Support/Caddy (and issued certs) are reused. -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{{ ansible_env.HOME }}</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{{ ai_logs_dir }}/caddy.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{ ai_logs_dir }}/caddy.err.log</string>
+</dict>
+</plist>

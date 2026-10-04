@@ -24,11 +24,12 @@
     src: com.otto.ollama.plist.j2
     dest: "{{ ansible_env.HOME }}/Library/LaunchAgents/com.otto.ollama.plist"
     mode: "0644"
+  register: ollama_plist
 
 - name: Load and start Ollama
   community.general.launchd:
     name: com.otto.ollama
-    state: started
+    state: "{{ 'restarted' if ollama_plist.changed else 'started' }}"
     enabled: true
 
 - name: Wait for the Ollama API
@@ -51,3 +52,27 @@
   ansible.builtin.command: "{{ brew_native_bin_dir }}/ollama pull {{ item }}"
   loop: "{{ ollama_models }}"
   when: item not in ollama_list.stdout
+
+- name: Ensure the Modelfiles directory exists
+  ansible.builtin.file:
+    path: "{{ ai_base_dir }}/modelfiles"
+    state: directory
+    mode: "0755"
+
+- name: Write 32k-context Modelfiles for the chat models
+  ansible.builtin.copy:
+    dest: "{{ ai_base_dir }}/modelfiles/{{ item.name }}.Modelfile"
+    mode: "0644"
+    content: |
+      FROM {{ item.base }}
+      PARAMETER num_ctx {{ ollama_context_length }}
+  loop: "{{ ollama_chat_models }}"
+
+# These share the base model's blobs, so they add no extra disk usage.
+- name: Create the 32k-context chat models
+  ansible.builtin.command:
+    cmd: >-
+      {{ brew_native_bin_dir }}/ollama create {{ item.name }}
+      -f {{ ai_base_dir }}/modelfiles/{{ item.name }}.Modelfile
+  loop: "{{ ollama_chat_models }}"
+  when: item.name not in ollama_list.stdout

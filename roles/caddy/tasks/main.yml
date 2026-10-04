@@ -22,7 +22,20 @@
       - caddy_conf.stat.exists
     fail_msg: >-
       Caddyfile not found at {{ caddy_config_file }}. Point caddy_config_file in
-      inventory/group_vars/all.yml at the config used by your running Caddy.
+      inventory/group_vars/all/main.yml at the config used by your running Caddy.
+
+# Docker Desktop holds host port 80 on this machine, so move Caddy's HTTP port to
+# 8080. Certificates are still issued automatically via TLS-ALPN on :443.
+- name: Keep Caddy off the privileged HTTP port
+  ansible.builtin.blockinfile:
+    path: "{{ caddy_config_file }}"
+    marker: "# {mark} ANSIBLE MANAGED AI STACK GLOBAL"
+    block: |
+      {
+          http_port 8080
+      }
+    insertbefore: BOF
+  register: caddy_global
 
 - name: Ensure the AI site block is present in the Caddyfile
   ansible.builtin.blockinfile:
@@ -34,33 +47,71 @@
 
 - name: Validate the resulting Caddyfile
   ansible.builtin.command:
-    cmd: "{{ caddy_bin }} validate --config {{ caddy_config_file }}"
+    cmd: "{{ caddy_bin }} validate --config {{ caddy_config_file }} --adapter caddyfile"
   changed_when: false
+
+# Caddy must bind :443, which requires root on macOS, so it is supervised as a
+# LaunchDaemon. HOME is set to the user's home so the existing ACME data and
+# issued certificates are reused.
+- name: Install the Caddy LaunchDaemon
+  ansible.builtin.template:
+    src: com.otto.caddy.plist.j2
+    dest: "{{ caddy_plist_path }}"
+    owner: root
+    group: wheel
+    mode: "0644"
+  become: true
+  register: caddy_plist
+
+- name: Load and start Caddy
+  community.general.launchd:
+    name: "{{ caddy_launchd_label }}"
+    state: "{{ 'restarted' if caddy_plist.changed else 'started' }}"
+    enabled: true
+  become: true
+
+- name: Wait for the Caddy admin API
+  ansible.builtin.uri:
+    url: http://127.0.0.1:2019/config/
+    status_code: 200
+  register: caddy_admin
+  until: caddy_admin.status == 200
+  retries: 30
+  delay: 2
+  changed_when: false
+  failed_when: false
+
+- name: Note whether the Caddy configuration changed
+  ansible.builtin.set_fact:
+    caddy_changed: "{{ caddy_global.changed or caddy_block.changed }}"
 
 - name: Reload Caddy via the admin API
   ansible.builtin.command:
-    cmd: "{{ caddy_bin }} reload --config {{ caddy_config_file }}"
+    cmd: "{{ caddy_bin }} reload --config {{ caddy_config_file }} --adapter caddyfile"
   register: caddy_reload
-  when: caddy_block.changed
+  when:
+    - caddy_changed
+    - caddy_admin.status | default(0) == 200
   changed_when: true
   failed_when: false
 
-- name: Fall back to restarting the Caddy service when reload is unavailable
+- name: Restart Caddy when the admin API reload was unavailable
   community.general.launchd:
     name: "{{ caddy_launchd_label }}"
     state: restarted
+  become: true
   when:
-    - caddy_block.changed
-    - caddy_reload.rc != 0
+    - caddy_changed
+    - caddy_admin.status | default(0) != 200
   failed_when: false
 
-- name: Report Caddy reload status
+- name: Report Caddy status
   ansible.builtin.debug:
     msg: >-
       {{
-        'AI site block already present; no reload needed.'
-        if not caddy_block.changed
-        else ('Caddy reloaded via admin API.'
-              if caddy_reload.rc == 0
-              else 'Admin reload failed; attempted service restart fallback.')
+        'Caddy config unchanged; no reload needed.'
+        if not caddy_changed
+        else ('Caddy reloaded via the admin API.'
+              if (caddy_admin.status | default(0)) == 200
+              else 'Caddy restarted as a LaunchDaemon (admin API was not ready).')
       }}
