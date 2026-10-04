@@ -61,23 +61,23 @@ The project owns the **floor**: models, data, and access all live on the Mac.
 
 ```mermaid
 flowchart LR
-    U[Browser / LAN or Internet] -->|HTTPS 443| C[Caddy\nnative LaunchDaemon]
-    C -->|/authelia/*| A[Authelia\ncontainer :9091]
-    C -->|forward_auth + TLS| W[Open WebUI\ncontainer :3000]
-    W -->|HTTP host.docker.internal| O[Ollama\nnative :11434 Metal]
-    W -->|Qdrant| Q[(Qdrant\ncontainer :6333)]
-    W -->|Tika| T[Tika\ncontainer :9998]
-    W -->|SearXNG| S[SearXNG\ncontainer :8080]
-    W -->|rerank :7997| R[Infinity reranker\nnative MPS]
-    W -->|terminal tool| X[Open Terminal\ncontainer :8000]
-    subgraph Docker Desktop (arm64, CPU)
+    U["Browser / LAN or Internet"] -->|"HTTPS 443"| C["Caddy<br/>native LaunchDaemon"]
+    C -->|"/authelia/*"| A["Authelia<br/>container :9091"]
+    C -->|"forward_auth + TLS"| W["Open WebUI<br/>container :3000"]
+    W -->|"HTTP host.docker.internal"| O["Ollama<br/>native :11434 Metal"]
+    W --> Q[("Qdrant<br/>container :6333")]
+    W --> T["Tika<br/>container :9998"]
+    W --> S["SearXNG<br/>container :8080"]
+    W -->|"rerank :7997"| R["Infinity reranker<br/>native MPS"]
+    W -->|"terminal tool"| X["Open Terminal<br/>container :8000"]
+    subgraph docker["Docker Desktop (arm64, CPU)"]
       A
       W
       Q
       T
       S
       X
-      D[Dozzle :8088]
+      D["Dozzle :8088"]
     end
 ```
 
