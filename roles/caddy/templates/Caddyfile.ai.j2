@@ -1,9 +1,27 @@
 {{ ai_hostname }} {
     encode gzip
+{% if authelia_enabled %}
+
+    # Authelia portal (served on the /authelia subpath).
+    @authelia path /authelia /authelia/*
+    handle @authelia {
+        reverse_proxy 127.0.0.1:{{ authelia_port }}
+    }
+
+    # Everything else requires a valid (2FA) Authelia session.
+    handle {
+        forward_auth 127.0.0.1:{{ authelia_port }} {
+            uri /api/authz/forward-auth?authelia_url=https://{{ ai_hostname }}/authelia/
+            copy_headers Remote-User Remote-Groups Remote-Email Remote-Name
+        }
+        reverse_proxy 127.0.0.1:{{ webui_port }}
+    }
+{% else %}
 {% if caddy_basic_auth_enabled %}
     basic_auth {
         {{ caddy_basic_auth_user }} {{ caddy_basic_auth_hash }}
     }
 {% endif %}
     reverse_proxy 127.0.0.1:{{ webui_port }}
+{% endif %}
 }

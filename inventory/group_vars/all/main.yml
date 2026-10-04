@@ -7,6 +7,9 @@
 brew_native_bin_dir: /opt/homebrew/bin
 ai_base_dir: "{{ ansible_env.HOME }}/ai-box"
 ai_logs_dir: "{{ ai_base_dir }}/logs"
+# Host uid/gid, used so the Authelia container can read its 0600 config files.
+ai_uid: "{{ ansible_user_uid }}"
+ai_gid: "{{ ansible_user_gid }}"
 
 # --- Networking / public edge ----------------------------------------------
 # Second DuckDNS name pointing at the same home IP (see README).
@@ -22,12 +25,17 @@ ollama_models:
   - qwen2.5:32b
   - llama3.1:8b
   - mxbai-embed-large
+  # Reasoning models (emit a separate chain-of-thought that Open WebUI renders
+  # in a collapsible "Thinking" panel).
+  - qwen3:32b
+  - deepseek-r1:32b
   # - qwen2.5-coder:32b          # optional code model; uncomment to include
 
 # Derived models with a baked 32k context. Ollama 0.34 auto-picks a context from
 # available VRAM and otherwise loads the 70B at its 131072 max, which overflows
 # the 56 GB wired limit and spills ~11% to CPU. Pick these "-32k" variants in
 # Open WebUI. They share blobs with the base models, so they cost no extra disk.
+# Reasoning models generate many more tokens, so the bounded context matters more.
 ollama_chat_models:
   - name: llama3.3-70b-32k
     base: llama3.3:70b-instruct-q4_K_M
@@ -35,6 +43,10 @@ ollama_chat_models:
     base: qwen2.5:32b
   - name: llama3.1-8b-32k
     base: llama3.1:8b
+  - name: qwen3-32b-32k
+    base: qwen3:32b
+  - name: deepseek-r1-32b-32k
+    base: deepseek-r1:32b
 # Context length baked into the derived "-32k" chat models. Ollama 0.34's own
 # OLLAMA_CONTEXT_LENGTH is superseded by a VRAM-based default, so this value is
 # applied per-model at build time instead. 32k keeps the 70B within the wired limit.
@@ -64,6 +76,16 @@ dozzle_enabled: true
 # disabled and an admin account created headlessly from the vault.
 caddy_basic_auth_enabled: false
 webui_enable_signup: false
+
+# --- Edge 2FA (Authelia) ----------------------------------------------------
+# Open WebUI has no native 2FA, so TOTP is enforced at the edge: Caddy
+# forward_auth -> Authelia. Authelia uses cookie sessions, so (unlike basic
+# auth) the SPA is not re-prompted. Single instance => in-memory session store,
+# no Redis needed. The portal is served on the /authelia subpath of the same
+# hostname because DuckDNS cannot share cookies across separate names.
+authelia_enabled: true
+authelia_image: authelia/authelia:latest
+authelia_port: 9091
 
 # --- Container images -------------------------------------------------------
 # Native arm64 images only; never the :cuda variants on Apple Silicon.

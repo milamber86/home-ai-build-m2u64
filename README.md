@@ -26,7 +26,13 @@ playbooks/site.yml              # the deployment play
 playbooks/preflight.yml         # read-only environment checks
 playbooks/verify.yml            # post-deploy functional checks
 playbooks/verify-70b.yml        # loads the 70B and confirms it is 100% GPU
-roles/{host,ollama,reranker,containers,caddy,validate}/
+playbooks/verify-authelia.yml   # checks the 2FA edge redirect and first-factor login
+playbooks/enroll-totp.yml       # pre-registers/rotates the Authelia TOTP device
+playbooks/verify-reasoning.yml  # checks reasoning models emit a thinking trace
+playbooks/enable-r1-websearch.yml  # adds the DeepSeek-R1 legacy-web-search model
+playbooks/verify-r1-websearch.yml  # confirms DeepSeek-R1 web search returns sources
+playbooks/set-websearch-default.yml  # pins the Web Search toggle to always-on
+roles/{host,ollama,reranker,authelia,containers,caddy,validate}/
 ```
 
 ## Prerequisites
@@ -65,18 +71,84 @@ torch for the reranker, so it can take a long time.
 ### Models
 
 Base models are pulled for use and reference (`llama3.3:70b-instruct-q4_K_M`,
-`qwen2.5:32b`, `llama3.1:8b`, `mxbai-embed-large`). In addition the play creates
-derived models with a **32k context baked in**:
+`qwen2.5:32b`, `llama3.1:8b`, `mxbai-embed-large`, plus the reasoning models
+`qwen3:32b` and `deepseek-r1:32b`). In addition the play creates derived models
+with a **32k context baked in**:
 
 - `llama3.3-70b-32k`
 - `qwen2.5-32b-32k`
 - `llama3.1-8b-32k`
+- `qwen3-32b-32k` (reasoning)
+- `deepseek-r1-32b-32k` (reasoning)
 
 **Use these `-32k` variants in Open WebUI.** Ollama 0.34 chooses a context from
 available VRAM and otherwise loads the 70B at its 131072 maximum, which overflows
 the 56 GB wired limit and spills ~11% of layers to CPU (66 GB, `11%/89% CPU/GPU`).
 At 32k the same model is fully resident: **47 GB, 100% GPU**. The derived models
 share blobs with the base models, so they add no disk usage.
+
+### Reasoning display
+
+The reasoning models (`qwen3-32b-32k`, `deepseek-r1-32b-32k`) emit a separate
+chain-of-thought that Open WebUI renders in a collapsible **Thinking** panel — the
+same idea as a coding agent's reasoning view. Ollama returns it as
+`message.thinking`; Open WebUI shows it above the answer. Qwen3 thinks by default
+(add `/no_think` to the prompt to disable); reasoning uses many more tokens, which
+is why the bounded 32k context matters. Verify with
+`ansible-playbook playbooks/verify-reasoning.yml` (it also confirms the models appear
+in Open WebUI's model list). Note Qwen3 can spend its whole token budget thinking, so
+give it room or disable thinking for simple prompts.
+
+### Web search
+
+Web search is SearXNG-backed and enabled server-side (`web.search.enable=true`,
+engine `searxng`, `searxng_query_url=http://searxng:8080/search`). The backend is
+verified: the SearXNG JSON endpoint returns results and
+`/api/v1/retrieval/process/web/search` returns 200. It only fires, however, when
+the **Web Search toggle is on in the chat composer** — the request then carries
+`features.web_search=true`. The toggle state sticks per user after you enable it
+once. If results still don't appear, open Workspace → Models → your model and make
+sure the **Web Search** capability is enabled, then re-ask.
+
+**Reasoning models differ.** Open WebUI runs web search two ways: classic *injected*
+search (the server searches and puts results in the prompt) or *native tool calling*
+(the model calls a `web_search` tool). Ollama tags DeepSeek-R1 as tool-capable, so
+Open WebUI picks the native path — which R1, a weak tool-caller, doesn't use.
+`playbooks/enable-r1-websearch.yml` creates a model **"DeepSeek R1 32B (Web Search)"**
+that forces `function_calling: legacy`, giving R1 classic injected search. Select that
+model and turn on the Web Search toggle; `playbooks/verify-r1-websearch.yml` confirms a
+`sources` array comes back. Qwen3 keeps native tool calling and is unaffected.
+
+**Keeping the toggle on.** Open WebUI has a UI setting `webSearch`; when it is
+`always`, the Web Search toggle stays on across model switches. `playbooks/set-websearch-default.yml`
+sets `ui.webSearch = "always"` for the admin user (hard-reload the tab afterwards).
+For all users / new users, set the same value in the admin default
+`ui.default_interface_settings`.
+
+### 2FA (edge auth)
+
+Open WebUI has no native 2FA, so TOTP is enforced at the edge by **Authelia** via
+Caddy `forward_auth`. It uses cookie sessions, so (unlike basic auth) the SPA is not
+re-prompted. The portal is at `https://<ai_hostname>/authelia/`.
+
+- First factor: username **`otto`** (this is the Authelia username, *not* the email),
+  password `authelia_user_password` (in the vault).
+- Second factor: the TOTP device is **pre-registered** by `playbooks/enroll-totp.yml`,
+  which bypasses the web UI's email identity-verification step. Scan
+  `~/ai-box/authelia/otto-totp.png` (or paste the otpauth URL from
+  `~/ai-box/authelia/otto-totp-url.txt`) into your authenticator, then enter the
+  6-digit code. Re-run the playbook any time to rotate the device.
+- Then Open WebUI's own login appears: `otto.beranek@gmail.com` /
+  `webui_admin_password` (in the vault).
+
+Authelia runs single-instance with the in-memory session store (no Redis needed).
+The path `/authelia` is the only unauthenticated route; everything else requires a
+valid 2FA session. Disable the whole layer with `authelia_enabled: false`.
+
+The notifier is **filesystem-only**, so Authelia's identity-verification codes (used
+for password reset or device management from the portal) are written to
+`~/ai-box/authelia/notification.txt` instead of being emailed. Configure an SMTP
+`notifier` in `roles/authelia/templates/configuration.yml.j2` if you want real email.
 
 ## Secrets
 
@@ -98,6 +170,11 @@ public site locked down.
 Rendered `~/ai-box/docker-compose.yml` and `~/ai-box/searxng/settings.yml` contain
 secrets and are written mode `0600`.
 
+Authelia 2FA uses `authelia_session_secret`, `authelia_storage_encryption_key`,
+`authelia_jwt_secret`, and the `authelia_user` / `authelia_user_password` first
+factor. Its `~/ai-box/authelia/{configuration.yml,users_database.yml}` are mode
+`0600` (the container runs as your host uid so it can read them).
+
 Caddy basic auth is **disabled** by default (`caddy_basic_auth_enabled: false`) —
 see the caveats. The `caddy_basic_auth_*` vault keys are kept so you can re-enable it.
 
@@ -113,7 +190,8 @@ see the caveats. The `caddy_basic_auth_*` vault keys are kept so you can re-enab
 | SearXNG | container | internal `:8080` |
 | Open Terminal | container | internal `:8000` |
 | Dozzle | container | `127.0.0.1:8088` |
-| Caddy | native LaunchDaemon `com.otto.caddy` | `https://<ai_hostname>` → `:3000` (TLS; auth via Open WebUI) |
+| Authelia (2FA) | container | `127.0.0.1:9091`; portal `https://<ai_hostname>/authelia/` |
+| Caddy | native LaunchDaemon `com.otto.caddy` | `https://<ai_hostname>` → `:3000` (TLS; Authelia 2FA then Open WebUI login) |
 | Metal wired limit | LaunchDaemon `com.otto.iogpu-wired-limit` | `iogpu.wired_limit_mb=57344` |
 
 Only Open WebUI (via Caddy) and Dozzle-on-localhost are exposed; everything else
@@ -133,8 +211,11 @@ unaffected.
 - Caddy HTTP basic auth is intentionally **off** (`caddy_basic_auth_enabled: false`).
   With Open WebUI's SPA, a cached basic-auth credential does not cover the app's
   XHR/WebSocket/service-worker requests, so Chrome re-prompts on essentially every
-  request. Access is protected by Open WebUI's own login with `ENABLE_SIGNUP=false`.
-  Set `caddy_basic_auth_enabled: true` to re-enable it, but expect the re-prompting.
+  request. Edge auth is instead **Authelia TOTP 2FA** (cookie sessions) followed by
+  Open WebUI's own login (`ENABLE_SIGNUP=false`). `caddy_basic_auth_enabled: true`
+  re-adds basic auth, but expect the re-prompting.
+- Authelia serves its portal on the `/authelia` subpath because DuckDNS does not allow
+  session cookies to be shared across separate `*.duckdns.org` names.
 - Container image tags are floating (`:main`, `:latest`). Pin explicit versions for
   reproducibility.
 - The reranker installs `infinity-emb[torch,server]` with `click<8.2`. The `[all]`

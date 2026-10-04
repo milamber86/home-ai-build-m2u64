@@ -6,6 +6,8 @@
     - role: host
     - role: ollama
     - role: reranker
+    - role: authelia
+      when: authelia_enabled
     - role: containers
     - role: caddy
     - role: validate

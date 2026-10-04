@@ -1,0 +1,54 @@
+# {{ ansible_managed }}
+theme: auto
+
+server:
+  address: 'tcp://0.0.0.0:{{ authelia_port }}/authelia'
+  disable_healthcheck: true
+
+log:
+  level: info
+
+totp:
+  disable: false
+  issuer: {{ ai_hostname }}
+  period: 30
+  skew: 1
+
+authentication_backend:
+  file:
+    path: /config/users_database.yml
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: {{ ai_hostname }}
+      policy: two_factor
+
+session:
+  name: authelia_session
+  same_site: lax
+  secret: {{ authelia_session_secret }}
+  expiration: 12h
+  inactivity: 45m
+  cookies:
+    - domain: {{ ai_hostname }}
+      authelia_url: https://{{ ai_hostname }}/authelia/
+      default_redirection_url: https://{{ ai_hostname }}/
+
+storage:
+  encryption_key: {{ authelia_storage_encryption_key }}
+  local:
+    path: /config/db.sqlite3
+
+regulation:
+  max_retries: 3
+  find_time: 2m
+  ban_time: 5m
+
+identity_validation:
+  reset_password:
+    jwt_secret: {{ authelia_jwt_secret }}
+
+notifier:
+  filesystem:
+    filename: /config/notification.txt

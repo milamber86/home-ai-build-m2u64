@@ -1,0 +1,32 @@
+---
+- name: Create the Authelia config directory
+  ansible.builtin.file:
+    path: "{{ ai_base_dir }}/authelia"
+    state: directory
+    mode: "0700"
+
+# The argon2id hash is stored in the vault (like the Caddy basic-auth hash) so the
+# rendered file is stable and idempotent. To change the password, regenerate with:
+#   docker run --rm --entrypoint authelia authelia/authelia:latest \
+#     crypto hash generate argon2 --no-confirm --password '<new-password>'
+# and update authelia_user_password_hash in the vault.
+- name: Deploy the Authelia configuration
+  ansible.builtin.template:
+    src: configuration.yml.j2
+    dest: "{{ ai_base_dir }}/authelia/configuration.yml"
+    mode: "0600"
+  register: authelia_conf
+
+- name: Deploy the Authelia users database
+  ansible.builtin.template:
+    src: users_database.yml.j2
+    dest: "{{ ai_base_dir }}/authelia/users_database.yml"
+    mode: "0600"
+  register: authelia_users
+
+# Authelia does not hot-reload these files; restart only when they change.
+- name: Restart Authelia so config/user changes take effect
+  ansible.builtin.command: docker restart authelia
+  when: authelia_conf.changed or authelia_users.changed
+  changed_when: true
+  failed_when: false

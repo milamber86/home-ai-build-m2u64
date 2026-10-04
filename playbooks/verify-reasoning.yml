@@ -1,0 +1,67 @@
+---
+- name: Verify reasoning models emit a thinking trace
+  hosts: m2ultra
+  gather_facts: false
+  tasks:
+    - name: Ask a reasoning question to each model
+      ansible.builtin.uri:
+        url: http://127.0.0.1:11434/api/chat
+        method: POST
+        body_format: json
+        body:
+          model: "{{ item }}"
+          stream: false
+          think: true
+          messages:
+            - role: user
+              content: >-
+                A bat and a ball cost $1.10 total. The bat costs $1.00 more than
+                the ball. How much does the ball cost? Think step by step.
+          options:
+            num_predict: 256
+        status_code: [200, 400, 500]
+        timeout: 300
+      loop:
+        - deepseek-r1-32b-32k
+        - qwen3-32b-32k
+      register: chat
+      failed_when: false
+
+    - name: Report thinking output per model
+      ansible.builtin.debug:
+        msg: >-
+          {{ item.item }}: status={{ item.status | default('n/a') }}
+          thinking_chars={{ (item.json.message.thinking | default('')) | length }}
+          content_chars={{ (item.json.message.content | default('')) | length }}
+          err={{ item.json.error | default('') }}
+      loop: "{{ chat.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Sign in to Open WebUI
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webui_port }}/api/v1/auths/signin"
+        method: POST
+        body_format: json
+        body:
+          email: "{{ webui_admin_email }}"
+          password: "{{ webui_admin_password }}"
+      register: ui_signin
+      changed_when: false
+
+    - name: List Open WebUI models
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webui_port }}/api/models"
+        headers:
+          Authorization: "Bearer {{ ui_signin.json.token }}"
+      register: ui_models
+      changed_when: false
+
+    - name: Assert the reasoning models are visible in Open WebUI
+      ansible.builtin.assert:
+        that:
+          - "'qwen3-32b-32k:latest' in (ui_models.json.data | map(attribute='id') | list)"
+          - "'deepseek-r1-32b-32k:latest' in (ui_models.json.data | map(attribute='id') | list)"
+        fail_msg: "Reasoning models not visible in Open WebUI: {{ ui_models.json.data | map(attribute='id') | list }}"
+        success_msg: "qwen3-32b-32k and deepseek-r1-32b-32k are visible in Open WebUI."
+

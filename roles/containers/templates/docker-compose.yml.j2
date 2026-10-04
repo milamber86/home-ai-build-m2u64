@@ -125,3 +125,18 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
 {% endif %}
+{% if authelia_enabled %}
+
+  # Edge TOTP 2FA. Runs as the host uid so it can read its 0600 config files.
+  authelia:
+    image: "{{ authelia_image }}"
+    container_name: authelia
+    restart: unless-stopped
+    user: "{{ ai_uid }}:{{ ai_gid }}"
+    ports:
+      - "127.0.0.1:{{ authelia_port }}:9091"
+    volumes:
+      - "{{ ai_base_dir }}/authelia:/config"
+    environment:
+      - TZ=Europe/Prague
+{% endif %}

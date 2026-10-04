@@ -1,0 +1,61 @@
+---
+# Pins the Web Search toggle to "always" for the admin user, so it no longer turns
+# off when switching models. Open WebUI reads this from the user's UI settings
+# (`ui.webSearch = "always"`).
+#
+#   ansible-playbook playbooks/set-websearch-default.yml
+#
+# Hard-reload the Open WebUI tab afterwards.
+- name: Default the Web Search toggle to always-on
+  hosts: m2ultra
+  gather_facts: false
+  tasks:
+    - name: Sign in to Open WebUI
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webui_port }}/api/v1/auths/signin"
+        method: POST
+        body_format: json
+        body:
+          email: "{{ webui_admin_email }}"
+          password: "{{ webui_admin_password }}"
+      register: signin
+      changed_when: false
+
+    - name: Read the current user settings
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webui_port }}/api/v1/users/user/settings"
+        headers:
+          Authorization: "Bearer {{ signin.json.token }}"
+      register: current
+      changed_when: false
+
+    - name: Merge webSearch=always into the UI settings
+      ansible.builtin.set_fact:
+        new_ui: "{{ (current.json.ui | default({})) | combine({'webSearch': 'always'}) }}"
+
+    - name: Save the user settings
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webui_port }}/api/v1/users/user/settings/update"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ signin.json.token }}"
+        body_format: json
+        body:
+          ui: "{{ new_ui }}"
+        status_code: [200, 400]
+      register: saved
+      changed_when: saved.status == 200
+      failed_when: false
+
+    - name: Assert the setting stuck
+      ansible.builtin.assert:
+        that:
+          - saved.json.ui.webSearch | default('') == 'always'
+        fail_msg: "Could not set webSearch=always (status {{ saved.status }})."
+        success_msg: "ui.webSearch is now 'always'."
+
+    - name: Note
+      ansible.builtin.debug:
+        msg:
+          - "ui.webSearch = {{ saved.json.ui.webSearch | default('?') }}"
+          - "Hard-reload the Open WebUI tab (Cmd+Shift+R) for the frontend to pick it up."

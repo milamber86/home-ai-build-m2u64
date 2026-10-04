@@ -1,0 +1,57 @@
+---
+- name: Verify Authelia 2FA edge auth
+  hosts: m2ultra
+  gather_facts: false
+  tasks:
+    - name: Unauthenticated request to the app root
+      ansible.builtin.uri:
+        url: "https://{{ ai_hostname }}/"
+        method: GET
+        follow_redirects: none
+        status_code: [200, 302]
+        validate_certs: true
+      register: root
+      changed_when: false
+      failed_when: false
+
+    - name: Authelia portal on the subpath
+      ansible.builtin.uri:
+        url: "https://{{ ai_hostname }}/authelia/"
+        method: GET
+        status_code: [200, 302]
+        validate_certs: true
+      register: portal
+      changed_when: false
+      failed_when: false
+
+    - name: Authelia health endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ authelia_port }}/api/health"
+        status_code: 200
+        validate_certs: false
+      register: health
+      changed_when: false
+      failed_when: false
+
+    - name: First-factor login with the configured Authelia credentials (via the public host)
+      ansible.builtin.uri:
+        url: "https://{{ ai_hostname }}/authelia/api/firstfactor"
+        method: POST
+        body_format: json
+        body:
+          username: "{{ authelia_user }}"
+          password: "{{ authelia_user_password }}"
+          keepMeLoggedIn: false
+        status_code: [200, 401]
+        validate_certs: true
+      register: firstfactor
+      changed_when: false
+      failed_when: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg:
+          - "app root: {{ root.status }} -> {{ root.location | default('(no redirect)') }}"
+          - "portal: {{ portal.status }}"
+          - "authelia health: {{ health.status }}"
+          - "firstfactor: {{ firstfactor.status }} body={{ firstfactor.content[:300] | default('') }}"

@@ -1,0 +1,52 @@
+---
+# Confirms classic (injected) web search works for the DeepSeek-R1 custom model.
+#   ansible-playbook playbooks/verify-r1-websearch.yml
+- name: Verify DeepSeek-R1 classic web search
+  hosts: m2ultra
+  gather_facts: false
+  tasks:
+    - name: Sign in to Open WebUI
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webui_port }}/api/v1/auths/signin"
+        method: POST
+        body_format: json
+        body:
+          email: "{{ webui_admin_email }}"
+          password: "{{ webui_admin_password }}"
+      register: signin
+      changed_when: false
+
+    - name: Chat with the custom model and web search enabled
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webui_port }}/api/chat/completions"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ signin.json.token }}"
+        body_format: json
+        body:
+          model: "deepseek-r1-32k-websearch"
+          stream: false
+          features:
+            web_search: true
+          messages:
+            - role: user
+              content: "Use web search to find one current headline about Open WebUI and cite its source URL."
+        status_code: [200, 400, 500]
+        timeout: 300
+      register: chat
+      changed_when: false
+      failed_when: false
+
+    - name: Assert the search returned sources
+      ansible.builtin.assert:
+        that:
+          - chat.status == 200
+          - (chat.json.sources | default([]) | length) > 0
+        fail_msg: >-
+          DeepSeek-R1 web search did not return sources (status {{ chat.status }}).
+          Run playbooks/enable-r1-websearch.yml first.
+        success_msg: "DeepSeek-R1 web search returned {{ chat.json.sources | length }} source(s)."
+
+    - name: Show the answer
+      ansible.builtin.debug:
+        msg: "{{ chat.json.choices[0].message.content | default('') | trim }}"

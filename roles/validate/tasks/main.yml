@@ -46,10 +46,10 @@
 - name: Check the public endpoint (optional)
   ansible.builtin.uri:
     url: "https://{{ ai_hostname }}/"
-    status_code: [200, 401]     # 401 is the expected basic_auth challenge
+    status_code: [200, 302]     # 302 to /authelia when 2FA is enforced
     validate_certs: true
   register: v_public
-  until: v_public.status in [200, 401]
+  until: v_public.status in [200, 302]
   retries: 3
   delay: 5
   changed_when: false

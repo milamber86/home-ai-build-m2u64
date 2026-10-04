@@ -1,0 +1,91 @@
+---
+# Makes web search work with DeepSeek-R1. Ollama tags R1 as tool-capable, so Open
+# WebUI uses native function calling and hands it a `web_search` tool the model
+# reliably fails to call. Setting the model's `function_calling` param to `legacy`
+# makes Open WebUI run its classic injected web search (SearXNG -> context) whenever
+# the Web Search toggle is on. Qwen3 keeps native tool calling and is unaffected.
+#
+#   ansible-playbook playbooks/enable-r1-websearch.yml
+#
+# In Open WebUI pick "DeepSeek R1 32B (Web Search)" and turn on the Web Search toggle.
+- name: Enable classic web search for DeepSeek-R1
+  hosts: m2ultra
+  gather_facts: false
+  vars:
+    r1_custom_id: "deepseek-r1-32k-websearch"
+    r1_base_id: "deepseek-r1-32b-32k:latest"
+  tasks:
+    - name: Sign in to Open WebUI
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webui_port }}/api/v1/auths/signin"
+        method: POST
+        body_format: json
+        body:
+          email: "{{ webui_admin_email }}"
+          password: "{{ webui_admin_password }}"
+      register: signin
+      changed_when: false
+
+    - name: Check whether the custom model already exists
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webui_port }}/api/v1/models/model?id={{ r1_custom_id }}"
+        headers:
+          Authorization: "Bearer {{ signin.json.token }}"
+        status_code: [200, 401, 404]
+      register: existing
+      changed_when: false
+      failed_when: false
+
+    - name: Create the legacy-web-search model
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webui_port }}/api/v1/models/create"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ signin.json.token }}"
+        body_format: json
+        body:
+          id: "{{ r1_custom_id }}"
+          base_model_id: "{{ r1_base_id }}"
+          name: "DeepSeek R1 32B (Web Search)"
+          meta:
+            description: >-
+              DeepSeek-R1 32B (32k context) with classic injected web search.
+              Enable the Web Search toggle in the chat.
+            capabilities:
+              builtin_tools: false
+          params:
+            function_calling: "legacy"
+          access_grants: []
+          is_active: true
+        status_code: [200, 400]
+      when: existing.status != 200
+      register: created
+      changed_when: created.status | default(0) == 200
+      failed_when: false
+
+    # Open WebUI caches app.state.MODELS; restart so the new model is resolvable.
+    - name: Restart Open WebUI to load the new model
+      ansible.builtin.command: docker restart open-webui
+      when: created is changed
+      changed_when: true
+
+    - name: Wait for Open WebUI to come back
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ webui_port }}/api/config"
+        status_code: 200
+      register: wait
+      until: wait.status == 200
+      retries: 40
+      delay: 3
+      changed_when: false
+      failed_when: false
+      when: created is changed
+
+    - name: Report
+      ansible.builtin.debug:
+        msg:
+          - "custom model id: {{ r1_custom_id }} (display: DeepSeek R1 32B (Web Search))"
+          - "already existed: {{ existing.status == 200 }}"
+          - "created now: {{ created is changed }}"
+          - "webui ready: {{ wait.status | default('n/a') }}"
+          - "Run playbooks/verify-r1-websearch.yml to confirm search, then select the model in Open WebUI."

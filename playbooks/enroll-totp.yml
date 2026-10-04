@@ -1,0 +1,92 @@
+---
+# Pre-registers a TOTP device for the Authelia user, bypassing the web UI's
+# email identity-verification step (our notifier is filesystem-only).
+#
+#   ansible-playbook playbooks/enroll-totp.yml
+#
+# Then open ~/ai-box/authelia/otto-totp.png (or otto-totp-url.txt) and add it to
+# your authenticator app. Re-running rotates the secret.
+- name: Enroll a TOTP device for Authelia
+  hosts: m2ultra
+  gather_facts: true
+  tasks:
+    # The portal requires an emailed identity-verification code to remove a device;
+    # the storage CLI does not, so re-running this playbook also resets the device.
+    - name: Remove any existing TOTP device (clean slate)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - authelia
+          - authelia
+          - storage
+          - user
+          - totp
+          - delete
+          - "{{ authelia_user }}"
+          - --config
+          - /config/configuration.yml
+      register: totp_delete
+      changed_when: totp_delete.rc == 0
+      failed_when: false
+      no_log: true
+
+    # generate refuses to overwrite an existing PNG even with --force.
+    - name: Remove stale QR/URL artifacts
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ ai_base_dir }}/authelia/otto-totp.png"
+        - "{{ ai_base_dir }}/authelia/otto-totp-url.txt"
+
+    - name: Generate a base32 TOTP secret (160-bit)
+      ansible.builtin.command:
+        argv:
+          - "{{ brew_native_bin_dir }}/python3.11"
+          - -c
+          - "import base64,os;print(base64.b32encode(os.urandom(20)).decode().rstrip('='))"
+      register: totp_secret
+      changed_when: false
+      no_log: true
+
+    - name: Register the TOTP device in Authelia storage
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - authelia
+          - authelia
+          - storage
+          - user
+          - totp
+          - generate
+          - "{{ authelia_user }}"
+          - --config
+          - /config/configuration.yml
+          - --issuer
+          - "{{ ai_hostname }}"
+          - --secret
+          - "{{ totp_secret.stdout }}"
+          - --path
+          - /config/otto-totp.png
+          - --force
+      register: totp_register
+      changed_when: true
+      no_log: true
+
+    - name: Write the otpauth URL for manual entry
+      ansible.builtin.copy:
+        dest: "{{ ai_base_dir }}/authelia/otto-totp-url.txt"
+        mode: "0600"
+        content: >-
+          otpauth://totp/{{ ai_hostname }}:{{ authelia_user }}?secret={{ totp_secret.stdout }}&issuer={{ ai_hostname }}
+      no_log: true
+
+    - name: Next steps
+      ansible.builtin.debug:
+        msg:
+          - "TOTP registered for '{{ authelia_user }}' (rc={{ totp_register.rc }})."
+          - "QR image:   {{ ai_base_dir }}/authelia/otto-totp.png"
+          - "Manual URL: {{ ai_base_dir }}/authelia/otto-totp-url.txt"
+          - "Add it to your authenticator, then log in with the 6-digit code."
