@@ -1,0 +1,139 @@
+---
+# Removes the AI stack. Safe by default: it refuses to run without confirmation.
+#
+#   ansible-playbook playbooks/uninstall.yml -e confirm_uninstall=true
+#
+# Optional, destructive:
+#   -e wipe_data=true         delete ~/ai-box and ~/.ollama/models (~118 GB)
+#   -e remove_caddy=true      also remove the Caddy service (otherwise it is kept
+#                             for the Jellyfin site on the same hostname)
+#   -e reset_wired_limit=true reset iogpu.wired_limit_mb to 0
+- name: Uninstall the M2 Ultra AI stack
+  hosts: m2ultra
+  gather_facts: true
+  vars:
+    confirm_uninstall: false
+    wipe_data: false
+    remove_caddy: false
+    reset_wired_limit: false
+  tasks:
+    - name: Require explicit confirmation
+      ansible.builtin.assert:
+        that:
+          - confirm_uninstall | bool
+        fail_msg: >-
+          Refusing to uninstall. Re-run with -e confirm_uninstall=true
+          (add -e wipe_data=true to delete data and -e remove_caddy=true to
+          remove the Caddy service too).
+
+    - name: Ensure privilege escalation is available (needed for the Caddy daemon)
+      ansible.builtin.command: /usr/bin/true
+      become: true
+      changed_when: false
+
+    - name: Tear down the containers, images, volumes, and networks
+      community.docker.docker_compose_v2:
+        project_src: "{{ ai_base_dir }}"
+        files:
+          - docker-compose.yml
+        project_name: ai-box-stack
+        state: absent
+        remove_images: all
+        remove_volumes: true
+        remove_orphans: true
+      register: teardown
+      failed_when: false
+
+    - name: Unload the native user services
+      ansible.builtin.shell: >-
+        launchctl bootout gui/$(id -u)/{{ item }} 2>/dev/null || true
+      loop:
+        - "{{ ollama_launchd_label }}"
+        - "{{ reranker_launchd_label }}"
+        - "{{ stray_ollama_agent_path | basename | regex_replace('\\.plist$', '') }}"
+      register: unload_user
+      changed_when: false
+      failed_when: false
+
+    - name: Unload the native root services
+      ansible.builtin.command:
+        cmd: "launchctl bootout system/{{ item }}"
+      loop:
+        - "{{ caddy_launchd_label }}"
+        - "{{ wired_limit_launchd_label }}"
+      become: true
+      register: unload_root
+      changed_when: unload_root.rc == 0
+      failed_when: false
+
+    - name: Remove the user LaunchAgent plists
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ ollama_plist_path }}"
+        - "{{ reranker_plist_path }}"
+        - "{{ stray_ollama_agent_path }}"
+
+    - name: Remove the wired-limit LaunchDaemon plist
+      ansible.builtin.file:
+        path: "{{ wired_limit_plist_path }}"
+        state: absent
+      become: true
+
+    - name: Remove the Caddy LaunchDaemon plist (optional)
+      ansible.builtin.file:
+        path: "{{ caddy_plist_path }}"
+        state: absent
+      become: true
+      when: remove_caddy | bool
+
+    - name: Remove the AI site block from the Caddyfile
+      ansible.builtin.blockinfile:
+        path: "{{ caddy_config_file }}"
+        marker: "# {mark} ANSIBLE MANAGED AI STACK"
+        state: absent
+      failed_when: false
+
+    - name: Remove the Caddy global block too (only when removing Caddy)
+      ansible.builtin.blockinfile:
+        path: "{{ caddy_config_file }}"
+        marker: "# {mark} ANSIBLE MANAGED AI STACK GLOBAL"
+        state: absent
+      when: remove_caddy | bool
+      failed_when: false
+
+    # The global http_port block is kept with Caddy because Docker Desktop owns :80.
+    - name: Reload Caddy for the remaining sites (Jellyfin)
+      ansible.builtin.shell: >-
+        launchctl bootstrap system {{ caddy_plist_path }} 2>/dev/null;
+        launchctl kickstart -k system/{{ caddy_launchd_label }}
+      become: true
+      when: not (remove_caddy | bool)
+      changed_when: false
+      failed_when: false
+
+    - name: Reset the Metal wired limit to the system default
+      ansible.builtin.command:
+        cmd: "/usr/sbin/sysctl -w iogpu.wired_limit_mb=0"
+      become: true
+      when: reset_wired_limit | bool
+      changed_when: true
+
+    - name: Wipe stack data (destructive)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ ai_base_dir }}"
+        - "{{ ansible_env.HOME }}/.ollama/models"
+      when: wipe_data | bool
+
+    - name: Report
+      ansible.builtin.debug:
+        msg:
+          - "Containers, images, and networks removed."
+          - "Native services unloaded; plists removed (Ollama, Infinity reranker, wired-limit)."
+          - "{{ 'Caddy service removed.' if (remove_caddy | bool) else 'Caddy kept for Jellyfin; AI site block removed.' }}"
+          - "Data wiped: {{ wipe_data | bool }} ({{ ai_base_dir }}, ~/.ollama/models)."
+          - "iogpu.wired_limit_mb reset: {{ reset_wired_limit | bool }} (otherwise it clears on reboot)."

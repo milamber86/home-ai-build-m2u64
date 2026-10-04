@@ -32,6 +32,9 @@ playbooks/verify-reasoning.yml  # checks reasoning models emit a thinking trace
 playbooks/enable-r1-websearch.yml  # adds the DeepSeek-R1 legacy-web-search model
 playbooks/verify-r1-websearch.yml  # confirms DeepSeek-R1 web search returns sources
 playbooks/set-websearch-default.yml  # pins the Web Search toggle to always-on
+playbooks/stack-stop.yml        # stop the whole stack (data preserved)
+playbooks/stack-start.yml       # start the whole stack
+playbooks/uninstall.yml         # remove the stack (confirm-gated)
 roles/{host,ollama,reranker,authelia,containers,caddy,validate}/
 ```
 
@@ -67,6 +70,30 @@ ansible-playbook playbooks/verify-70b.yml      # loads ~47 GB; be patient
 
 First run pulls tens of GB of models (~43 GB for the 70B alone) and installs
 torch for the reranker, so it can take a long time.
+
+### Start, stop, uninstall
+
+These need `--become-password-file ~/.ansible_become_pass` because the Caddy daemon runs as root.
+
+```sh
+# stop everything, keep all data (containers + native services)
+ansible-playbook playbooks/stack-stop.yml  --become-password-file ~/.ansible_become_pass
+
+# start it again (no re-pull, no reinstall)
+ansible-playbook playbooks/stack-start.yml --become-password-file ~/.ansible_become_pass
+
+# remove the stack; refuses to run without confirmation
+ansible-playbook playbooks/uninstall.yml -e confirm_uninstall=true --become-password-file ~/.ansible_become_pass
+
+#   -e wipe_data=true          also delete ~/ai-box and ~/.ollama/models (~118 GB)
+#   -e remove_caddy=true       also remove the Caddy service (otherwise kept for Jellyfin)
+#   -e reset_wired_limit=true  reset iogpu.wired_limit_mb to 0
+```
+
+`stack-stop` unloads Caddy, Ollama, and the reranker via `launchctl bootout` and stops
+the containers; `stack-start` reverse-bootstraps them (`bootstrap` + `kickstart -k`) and
+waits for Ollama/Open WebUI to answer. Running `playbooks/site.yml` is also a valid
+"start everything" (it is idempotent) but does more work.
 
 ### Models
 

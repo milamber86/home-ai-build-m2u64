@@ -1,0 +1,46 @@
+---
+# Stops the whole AI stack but keeps all data (models, databases, configs).
+# Bring it back with:  ansible-playbook playbooks/stack-start.yml
+- name: Stop the M2 Ultra AI stack (data preserved)
+  hosts: m2ultra
+  gather_facts: true
+  tasks:
+    - name: Ensure privilege escalation is available (needed for the Caddy daemon)
+      ansible.builtin.command: /usr/bin/true
+      become: true
+      changed_when: false
+
+    - name: Stop the container stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ ai_base_dir }}"
+        files:
+          - docker-compose.yml
+        project_name: ai-box-stack
+        state: stopped
+      register: compose_stop
+      failed_when: false
+
+    - name: Unload the native user services (Ollama, Infinity reranker)
+      ansible.builtin.shell: "launchctl bootout gui/$(id -u)/{{ item }}"
+      loop:
+        - "{{ ollama_launchd_label }}"
+        - "{{ reranker_launchd_label }}"
+      register: stop_user
+      changed_when: stop_user.rc == 0
+      failed_when: false
+
+    - name: Unload the native root service (Caddy)
+      ansible.builtin.command:
+        cmd: "launchctl bootout system/{{ caddy_launchd_label }}"
+      become: true
+      register: stop_root
+      changed_when: stop_root.rc == 0
+      failed_when: false
+
+    - name: Report
+      ansible.builtin.debug:
+        msg:
+          - "Container stack stopped (if Docker Desktop was running)."
+          - "Native services unloaded: Ollama, Infinity reranker, Caddy."
+          - "Data preserved: {{ ai_base_dir }}, {{ ansible_env.HOME }}/.ollama/models."
+          - "Start again with: ansible-playbook playbooks/stack-start.yml"

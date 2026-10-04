@@ -103,3 +103,13 @@ caddy_config_file: "{{ ansible_env.HOME }}/Caddyfile"
 # Caddy must bind :80/:443, which needs root, so it is managed as a LaunchDaemon.
 caddy_launchd_label: com.otto.caddy
 caddy_plist_path: /Library/LaunchDaemons/com.otto.caddy.plist
+
+# --- Service labels / plist paths (stack start/stop/uninstall) --------------
+ollama_launchd_label: com.otto.ollama
+ollama_plist_path: "{{ ansible_env.HOME }}/Library/LaunchAgents/com.otto.ollama.plist"
+reranker_launchd_label: com.otto.infinity-reranker
+reranker_plist_path: "{{ ansible_env.HOME }}/Library/LaunchAgents/com.otto.infinity-reranker.plist"
+wired_limit_launchd_label: com.otto.iogpu-wired-limit
+wired_limit_plist_path: /Library/LaunchDaemons/com.otto.iogpu-wired-limit.plist
+# Stray Homebrew ollama agent that predates this project; removed on uninstall.
+stray_ollama_agent_path: "{{ ansible_env.HOME }}/Library/LaunchAgents/sh.brew.ollama.plist"
